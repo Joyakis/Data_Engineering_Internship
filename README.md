@@ -546,10 +546,7 @@ pytest tests/test_pipeline.py -v
 pytest tests/test_pipeline.py::test_clean_orders_drops_duplicates -v
 ```
 
-### Test Coverage
-```bash
-pytest tests/test_pipeline.py --cov=Task2 --cov-report=html
-```
+
 
 Tests cover:
 - Deduplication logic
