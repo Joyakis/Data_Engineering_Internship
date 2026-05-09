@@ -1,0 +1,15 @@
+# Ignore the raw data folder
+data/
+output/
+
+# Ignore Python artifacts
+__pycache__/
+*.pyc
+
+# Ignore Spark metadata
+spark-warehouse/
+derby.log
+metastore_db/
+
+# Ignore environment folders
+spark_env/

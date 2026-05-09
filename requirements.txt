@@ -1,0 +1,12 @@
+# E-Commerce Data Pipeline - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core Data Processing
+pyspark==3.4.1                    # Apache Spark Python API for distributed computing
+
+
+# Testing & Validation
+pytest==7.4.0                     # Unit test framework
+
+
+
