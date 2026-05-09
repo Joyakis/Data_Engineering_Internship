@@ -119,6 +119,11 @@ The dataset contains realistic quality issues that must be handled explicitly:
 - **Rolling windows** for monthly trends
 - **Percentage share** calculations
 
+  To ensure the window functions were performing efficiently, I analyzed the physical plan using df.explain()
+    ```
+    category_shares_df.explain(mode="formatted")
+    ```
+
 **Output:** CSV files with rankings, top customers, monthly metrics
 
 ### Task 5: Return Analysis
