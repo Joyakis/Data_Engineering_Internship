@@ -491,9 +491,6 @@ For production deployment at scale:
 
 - **Switch to cloud storage:** S3, Azure Blob Storage, or GCS for data (modify `base_path`)
 - **Deploy to Databricks/EMR:** Use managed Spark clusters instead of local
-- **Add external schema registry:** AVRO/Protobuf schemas in Confluent Schema Registry
-- **Implement incremental loading:** Use watermarks and delta tables for delta processing
-- **Add data quality framework:** Implement Great Expectations or Soda for automated validation
 - **Parallelize tasks:** Use Airflow/Dagster for orchestration and parallel task execution
 
 ## Troubleshooting
