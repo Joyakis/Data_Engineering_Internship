@@ -45,27 +45,44 @@ The dataset contains realistic quality issues that must be handled explicitly:
 
 ```
 .
-├── data/                          # Input CSV files
-│   ├── orders.csv
-│   ├── customers.csv
-│   ├── order_items.csv
-│   └── returns.csv
-├── output/                        # Generated outputs
-│   ├── master_enriched_data/      # Parquet partitioned by year/month
-│   ├── returns_analysis.csv
-│   ├── customer_rankings.csv
-│   ├── rejected_*.csv             # Rejected records per table
-│   └── anomalies.csv
+├── data/                          # Input CSV files (source data)
+│   ├── orders.csv                 # ~2000 orders with intentional issues
+│   ├── customers.csv              # ~500 customers
+│   ├── order_items.csv            # ~6000+ line items
+│   └── returns.csv                # ~300 return records
+│
+├── output/                        # Generated outputs (created by pipeline)
+│   ├── master_enriched_data/      # Parquet partitioned by year and month
+│   │   ├── order_year=2022/
+│   │   │   ├── order_month=1/
+│   │   │   ├── order_month=2/
+│   │   │   └── ...
+│   │   ├── order_year=2023/
+│   │   │   ├── order_month=1/
+│   │   │   ├── order_month=2/
+│   │   │   └── ...
+│   │   └── order_year=2024/
+│   │       └── ...
+│   │
+│   ├── summaries/                 # CSV summary tables for analysis
+│   │   ├── category_revenue_shares/     # Revenue by category per month
+│   │   ├── return_rates_by_category/    # Returns by product category
+│   │   ├── return_rates_by_tier/        # Returns by customer tier
+│   │   └── top_10_refunded_customers/   # Top customers by refund amount
+│   │
+│   └── orphaned_items/            # Order items with no matching order
+│       └── part-00000-*.csv       # ~200-300 orphaned items
+│
 ├── Task1.py                       # Data Ingestion & Schema Enforcement
 ├── Task2.py                       # Data Cleaning & Normalization
 ├── Task3.py                       # Joins & Enrichment
 ├── Task4.py                       # Aggregations & Window Functions
 ├── Task5.py                       # Return Analysis
-├── Task6.py                       # Output & Partitioning
+├── Task6.py                       # Output & Partitioning (orchestrator)
 ├── tests/
-│   └── test_pipeline.py           # Unit tests (pytest)
-├── verify.py                      # Validation script
-├── requirements.txt               # Python dependencies
+│   └── test_pipeline.py           # Unit tests (pytest + Spark)
+├── verify.py                      # Validation script (runs Task 2 & checks)
+├── requirements.txt               # Python/PySpark dependencies
 └── README.md                      # This file
 ```
 
@@ -288,20 +305,30 @@ python Task6.py
 **Expected output location:**
 ```
 output/
-├── master_enriched_data/           # Parquet partitioned by year/month
+├── master_enriched_data/           # Parquet partitioned by order_year/order_month
+│   ├── order_year=2022/
+│   │   ├── order_month=1/
+│   │   │   └── part-*.parquet      # Spark Parquet files
+│   │   ├── order_month=2/
+│   │   └── ...
 │   ├── order_year=2023/
-│   │   ├── order_month=01/
-│   │   ├── order_month=02/
+│   │   ├── order_month=1/
 │   │   └── ...
 │   └── order_year=2024/
-├── customer_rankings.csv           # ~50–100 rows (top customers per country)
-├── returns_analysis.csv            # ~500–1000 rows (return metrics)
-├── anomalies.csv                   # ~20–50 rows (flagged data issues)
-├── orphaned_items.csv              # ~50–200 rows (items with no order)
-├── rejected_orders.csv             # Casting/validation failures
-├── rejected_customers.csv
-├── rejected_items.csv
-└── rejected_returns.csv
+│       └── ...
+│
+├── summaries/                      # CSV summary tables
+│   ├── category_revenue_shares/
+│   │   └── part-*.csv              # ~12 rows (1 per month × 2 categories)
+│   ├── return_rates_by_category/
+│   │   └── part-*.csv              # ~20-30 rows (by category/tier)
+│   ├── return_rates_by_tier/
+│   │   └── part-*.csv              # 4-5 rows (bronze/silver/gold/platinum)
+│   └── top_10_refunded_customers/
+│       └── part-*.csv              # Top 10 customers by refund amount
+│
+└── orphaned_items/                 # Items referencing non-existent orders
+    └── part-*.csv                  # 490rows (orphaned line items)
 ```
 
 ### Validation: Verify Outputs Were Generated
@@ -322,11 +349,17 @@ Get-ChildItem output/ -Recurse | Measure-Object -Property Length -Sum
 
 ### Inspect Output Files
 
-**View CSV output (first 5 rows):**
+**View CSV summary files:**
 ```bash
-head -5 output/customer_rankings.csv
-head -5 output/returns_analysis.csv
-head -5 output/anomalies.csv
+# Windows PowerShell
+Get-Content output/summaries/top_10_refunded_customers/part-*.csv | head -10
+Get-Content output/summaries/return_rates_by_tier/part-*.csv
+Get-Content output/orphaned_items/part-*.csv | head -5
+
+# Linux/macOS
+head -10 output/summaries/top_10_refunded_customers/part-*.csv
+cat output/summaries/return_rates_by_tier/part-*.csv
+head -5 output/orphaned_items/part-*.csv
 ```
 
 **Load Parquet into Spark for analysis:**
@@ -335,14 +368,20 @@ from pyspark.sql import SparkSession
 
 spark = SparkSession.builder.appName("Inspect").getOrCreate()
 
-# Load master enriched data
+# Load master enriched data (all partitions)
 df = spark.read.parquet("output/master_enriched_data/")
+print(f"Total enriched orders: {df.count()}")
 df.printSchema()
 df.show(5)
 
-# Load specific partition (e.g., Jan 2023)
-df_jan_2023 = spark.read.parquet("output/master_enriched_data/order_year=2023/order_month=01/")
-print(f"Rows in Jan 2023: {df_jan_2023.count()}")
+# Load specific partition (e.g., January 2023)
+df_jan_2023 = spark.read.parquet("output/master_enriched_data/order_year=2023/order_month=1/")
+print(f"Orders in Jan 2023: {df_jan_2023.count()}")
+
+# Load orphaned items
+orphaned = spark.read.csv("output/orphaned_items/", header=True)
+print(f"Orphaned items: {orphaned.count()}")
+orphaned.show()
 ```
 
 ### Reproduce Single Task Outputs
@@ -379,15 +418,19 @@ After running the full pipeline, you should see approximately:
 
 | Metric | Expected Value |
 |--------|-----------------|
-| Orders ingested | ~2000 rows |
-| Orders rejected/cleaned | ~200 rows |
-| Customers ingested | ~500 rows |
-| Customers cleaned | ~10–20 rows (duplicates + invalid dates) |
-| Order items ingested | ~6000–7000 items |
-| Orphaned items detected | ~200–300 items (~4% of total) |
-| Returns with refund > order amount | ~5–10 flags |
-| Duplicates removed | ~150–200 rows |
-| Negative amounts flagged | ~60–90 anomalies |
+| **Orders ingested** | ~2000 rows |
+| **Orders cleaned (kept)** | ~1800 rows (duplicates + NULLs removed) |
+| **Customers ingested** | ~500 rows |
+| **Customers cleaned** | ~490 rows (duplicates removed) |
+| **Order items ingested** | ~6000–7000 items |
+| **Order items cleaned** | ~5700–6800 items |
+| **Orphaned items detected** | ~200–300 items (~4% of total) |
+| **Returns ingested** | ~300 rows |
+| **Returns with refund anomaly** | ~15–20 rows (refund > order amount) |
+| **Duplicates removed** | ~150–200 rows across all tables |
+| **Negative amounts flagged** | ~60–90 anomalies (retained, not dropped) |
+| **Categories in summaries** | 10-15 product categories |
+| **Partitions in master data** | 24–36 (months × years from 2022–2024) |
 
 ### Troubleshooting Output Generation
 
@@ -414,31 +457,61 @@ spark.read.parquet("output/master_enriched_data/").show(1)
 
 ## Output Artifacts
 
-### Parquet Files (Master Data)
+### Master Enriched Data (Parquet, Partitioned)
 - **Location:** `output/master_enriched_data/`
-- **Format:** Partitioned by `order_year` and `order_month`
+- **Format:** Parquet files partitioned by `order_year` and `order_month`
+- **Contents:** Complete enriched order dataset with:
+  - All orders with customer and item data joined
+  - Calculated `net_amount` (total after discount)
+  - Flags for negative amounts and refund anomalies
+  - All non-rejected, non-duplicated records
 - **Usage:** Load into BI tools (Tableau, Power BI, Looker) or analytical databases
+- **Scale:** ~2000 records across all partitions
 - **Example Query:**
   ```python
-  spark.read.parquet("output/master_enriched_data/order_year=2023/order_month=01")
+  spark.read.parquet("output/master_enriched_data/order_year=2023/order_month=1")
   ```
 
-### CSV Summaries
-- **customer_rankings.csv** — Customers ranked by LTV per country
-- **returns_analysis.csv** — Return rates and top refunded customers
-- **anomalies.csv** — Flagged data quality issues (negatives, refund overage)
-- **rejected_orders.csv** — Orders rejected during ingestion
-- **rejected_customers.csv** — Customers rejected during ingestion
-- **rejected_items.csv** — Items rejected during ingestion
-- **rejected_returns.csv** — Returns rejected during ingestion
-- **orphaned_items.csv** — Order items with no matching order
+### Summary Tables (CSV, in `output/summaries/`)
+
+#### Category Revenue Shares
+- **Location:** `output/summaries/category_revenue_shares/`
+- **Format:** CSV - One row per category per month
+- **Columns:** product_category, order_month, revenue, revenue_share_pct
+- **Use Case:** Track category performance trends over time
+
+#### Return Rates by Category
+- **Location:** `output/summaries/return_rates_by_category/`
+- **Format:** CSV - One row per category
+- **Columns:** product_category, total_items_sold, returned_items, return_rate_pct
+- **Use Case:** Identify high-return product categories
+
+#### Return Rates by Tier
+- **Location:** `output/summaries/return_rates_by_tier/`
+- **Format:** CSV - One row per customer tier (bronze/silver/gold/platinum)
+- **Columns:** customer_tier, total_orders, returned_orders, return_rate_pct
+- **Use Case:** Customer segment quality analysis
+
+#### Top 10 Refunded Customers
+- **Location:** `output/summaries/top_10_refunded_customers/`
+- **Format:** CSV - Top 10 customers by total refund amount
+- **Columns:** customer_id, customer_tier, country, total_refunded, return_count, return_rate_pct
+- **Use Case:** VIP customer risk/retention analysis
+
+### Orphaned Items
+- **Location:** `output/orphaned_items/`
+- **Format:** CSV file(s)
+- **Contents:** Order items that reference non-existent orders
+- **Columns:** item_id, order_id (invalid), product_id, quantity, unit_price, category
+- **Scale:** ~200–300 items (~4% of total order_items)
+- **Use Case:** Data quality investigation; identify missing orders
 
 ### Log Output
 All tasks print detailed logs to console including:
 - Row counts at each stage
 - Rejection counts and reasons
 - Data quality metrics
-- Join results
+- Join results and orphaned record counts
 
 ## Design Decisions & Rationale
 
